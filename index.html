@@ -86,7 +86,12 @@
       margin-bottom: .4rem;
     }
 
-    .operaciones { display: grid; grid-template-columns: repeat(4, 1fr); gap: .6rem; }
+    .operaciones { display: grid; grid-template-columns: repeat(5, 1fr); gap: .6rem; }
+
+    .campo-deshabilitado {
+      opacity: .4;
+      pointer-events: none;
+    }
 
     /* Los radios reales quedan invisibles pero SIGUEN EXISTIENDO y siguen
        siendo accesibles: se navegan con flechas y los lee un lector de
@@ -337,16 +342,16 @@
 
         <div class="fila-operandos">
           <div>
-            <label for="a">Primer valor</label>
+            <label for="a" id="label-a">Primer valor</label>
             <input type="number" id="a" name="a" step="any" required placeholder="0" autofocus>
           </div>
-          <div>
-            <label for="b">Segundo valor</label>
+          <div id="grupo-b">
+            <label for="b" id="label-b">Segundo valor</label>
             <input type="number" id="b" name="b" step="any" required placeholder="0">
           </div>
         </div>
 
-        <!-- Radios y no botones sueltos: la operación es UNA sola entre cuatro
+        <!-- Radios y no botones sueltos: la operación es UNA sola entre cinco
              opciones mutuamente excluyentes. Ese es exactamente el input que
              inventaron los radio buttons. Además el navegador garantiza solo
              que nunca haya dos seleccionadas — no escribís código para eso.
@@ -367,6 +372,9 @@
 
             <input type="radio" id="op-div" name="operacion" value="division">
             <label for="op-div"><span class="simbolo">÷</span>División</label>
+
+            <input type="radio" id="op-log" name="operacion" value="logaritmo">
+            <label for="op-log"><span class="simbolo">log₁₀</span>Logaritmo</label>
           </div>
         </fieldset>
 
@@ -457,6 +465,9 @@ const boton       = document.getElementById("boton");
 const botonLimpiar = document.getElementById("boton-limpiar");
 const campoA      = document.getElementById("a");
 const campoB      = document.getElementById("b");
+const grupoB      = document.getElementById("grupo-b");
+const labelA      = document.getElementById("label-a");
+const radiosOperacion = document.querySelectorAll('input[name="operacion"]');
 const panel       = document.getElementById("resultado");
 const expresionEl = document.getElementById("expresion");
 const valorEl     = document.getElementById("valor");
@@ -468,6 +479,25 @@ const panelHistorial  = document.getElementById("panel-historial");
 const listaHistorial  = document.getElementById("historial");
 const notaHistorial   = document.getElementById("nota-historial");
 const botonRefrescar  = document.getElementById("boton-refrescar");
+
+function actualizarEstadoOperandos() {
+  const operacion = document.querySelector('input[name="operacion"]:checked')?.value;
+  if (operacion === "logaritmo") {
+    campoB.disabled = true;
+    campoB.required = false;
+    grupoB.classList.add("campo-deshabilitado");
+    labelA.textContent = "Valor (x > 0)";
+  } else {
+    campoB.disabled = false;
+    campoB.required = true;
+    grupoB.classList.remove("campo-deshabilitado");
+    labelA.textContent = "Primer valor";
+  }
+}
+
+radiosOperacion.forEach((radio) => {
+  radio.addEventListener("change", actualizarEstadoOperandos);
+});
 
 // ===========================================================================
 // CONFIGURACION
@@ -523,15 +553,19 @@ formulario.addEventListener("submit", async (evento) => {
   // FormData lee los campos del form por su atributo name. No hace falta ir
   // input por input con getElementById.
   const datos = new FormData(formulario);
+  const operacion = datos.get("operacion");
 
   // Number() explicito: los <input> siempre entregan STRING, aunque digan
   // type="number". Si mandamos "2" en vez de 2, Pydantic igual lo acepta,
   // pero acostumbrate a mandar el tipo correcto desde el origen.
   const cuerpo = {
     a: Number(datos.get("a")),
-    b: Number(datos.get("b")),
-    operacion: datos.get("operacion"),
+    operacion: operacion,
   };
+
+  if (operacion !== "logaritmo") {
+    cuerpo.b = Number(datos.get("b"));
+  }
 
   boton.disabled = true;
   boton.textContent = "Calculando...";
@@ -582,27 +616,18 @@ formulario.addEventListener("submit", async (evento) => {
       return;
     }
 
-    expresionEl.textContent = `${json.a} ${json.simbolo} ${json.b} =`;
+    if (json.operacion === "logaritmo") {
+      expresionEl.textContent = `log₁₀(${json.a}) =`;
+      anunciar(`Resultado: log10(${json.a}) = ${json.resultado}`);
+    } else {
+      expresionEl.textContent = `${json.a} ${json.simbolo} ${json.b} =`;
+      anunciar(`Resultado: ${json.a} ${json.simbolo} ${json.b} = ${json.resultado}`);
+    }
     valorEl.textContent = json.resultado;
     valorEl.classList.remove("error");
 
-    // Lo mismo que ve el ojo, dicho en una frase completa para quien escucha.
-    // "12 / 5 = 2.4" leido en voz alta es mas claro que "2.4" a secas.
-    anunciar(`Resultado: ${json.a} ${json.simbolo} ${json.b} = ${json.resultado}`);
-
     // La cuenta que acabamos de hacer YA quedo guardada del lado del servidor
     // (si hay base), asi que volvemos a pedir la lista para verla aparecer.
-    //
-    // OJO CON EL await QUE NO ESTA: esto se dispara y sigue. El resultado ya
-    // se pinto en pantalla; hacer esperar al usuario a que vuelva una segunda
-    // consulta, solo para refrescar un cuadro secundario, seria pagar dos
-    // viajes de red donde el importante ya termino.
-    //
-    // La otra opcion —agregar la fila a mano en el DOM sin preguntarle a la
-    // API— es mas rapida todavia y tiene una trampa: la pantalla pasa a
-    // mostrar lo que vos CREES que se guardo, no lo que se guardo. Si la base
-    // estaba caida, db.guardar() se lo trago en silencio y el front estaria
-    // mintiendo. Preguntamos.
     refrescarHistorial();
 
   } catch (error) {
@@ -650,6 +675,8 @@ botonLimpiar.addEventListener("click", () => {
   // aunque el input sea type="number". Por eso "0" entre comillas.
   campoA.value = "0";
   campoB.value = "0";
+  document.getElementById("op-suma").checked = true;
+  actualizarEstadoOperandos();
 
   // Escondemos el resultado viejo. Si no lo hicieras, quedaria en pantalla un
   // numero que ya no corresponde a lo que muestran los campos. El usuario ve
